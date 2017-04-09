@@ -87,11 +87,6 @@
   (data-type [v])
   (data-props [v]))
 
-(derive ::array ::compound)
-(derive ::map ::compound)
-(derive ::struct ::compound)
-(derive ::union ::compound)
-
 (extend-protocol TypeInference
   (Class/forName "[C")
   (data-type [v] ::char)
@@ -204,15 +199,12 @@
      :max   (apply max coll)
      :count nrows}))
 
-(defn parse-file []
-  (cheshire.core/parse-string (slurp (io/resource "search.json")) keyword))
-
 (defmulti typedef data-type)
 
 (defmethod typedef :default [x]
   (if-let [props (data-props x)]
     [(data-type x) props]
-    [(data-type x)]))
+    (data-type x)))
 
 (defmethod typedef ::map [x]
   [::map
@@ -243,49 +235,86 @@
       (= n-types 1)   (conj tdef (first child-types))
       :else           (conj tdef child-types))))
 
-(defn type-description
+(defn typedef->schema
   "Creates an ORC TypeDescription"
-  [[dtype opts]]
-  (case dtype
-    ::boolean   (TypeDescription/createBoolean)
-    ::tinyint   (TypeDescription/createByte)
-    ::smallint  (TypeDescription/createShort)
-    ::int       (TypeDescription/createInt)
-    ::bigint    (TypeDescription/createLong)
-    ::float     (TypeDescription/createFloat)
-    ::double    (TypeDescription/createDouble)
-    ::string    (TypeDescription/createString)
-    ::date      (TypeDescription/createDate)
-    ::timestamp (TypeDescription/createTimestamp)
-
-    ;; ::binary
-    ::decimal   (let [{:keys [scale precision]} opts]
-                  (cond-> (TypeDescription/createDecimal)
-                    (number? scale) (.withScale scale)
-                    (number? precision) (.withPrecision precision)))
-    ;; ::varchar
-    ;; ::char
-    ::array     (TypeDescription/createList (type-description opts))
-    ::map       (let [key-types (set (map typedef (keys opts)))
-                      ktype     (if (> (count key-types) 1)
-                                  (type-description [::union key-types])
-                                  (type-description (first key-types)))
-                      val-types (set (vals opts))
-                      vtype     (if (> (count val-types) 1)
-                                  (type-description [::union val-types])
-                                  (type-description (first val-types)))]
-                  (TypeDescription/createMap ktype vtype))
-    ::struct    (let [struct (TypeDescription/createStruct)]
-                  (doseq [[k v] opts]
-                    (.addField struct (name k) (type-description v)))
-                  struct)
-    ::union     (let [utype (TypeDescription/createUnion)]
-                  (doseq [child opts]
-                    (.addUnionChild utype (type-description child)))
-                  utype)))
+  [td]
+  (let [[dtype opts] (if (vector? td) td [td])]
+    (case dtype
+      ::boolean   (TypeDescription/createBoolean)
+      ::tinyint   (TypeDescription/createByte)
+      ::smallint  (TypeDescription/createShort)
+      ::int       (TypeDescription/createInt)
+      ::bigint    (TypeDescription/createLong)
+      ::float     (TypeDescription/createFloat)
+      ::double    (TypeDescription/createDouble)
+      ::string    (TypeDescription/createString)
+      ::date      (TypeDescription/createDate)
+      ::timestamp (TypeDescription/createTimestamp)
+      ::binary    (TypeDescription/createBinary)
+      ::decimal   (let [{:keys [scale precision]} opts]
+                    (cond-> (TypeDescription/createDecimal)
+                      (number? scale) (.withScale scale)
+                      (number? precision) (.withPrecision precision)))
+      ::varchar   (TypeDescription/createVarchar)
+      ::char      (TypeDescription/createChar )
+      ::array     (TypeDescription/createList (typedef->schema opts))
+      ::map       (let [key-types (set (map typedef (keys opts)))
+                        ktype     (if (> (count key-types) 1)
+                                    (typedef->schema [::union key-types])
+                                    (typedef->schema (first key-types)))
+                        val-types (set (vals opts))
+                        vtype     (if (> (count val-types) 1)
+                                    (typedef->schema [::union val-types])
+                                    (typedef->schema (first val-types)))]
+                    (TypeDescription/createMap ktype vtype))
+      ::struct    (let [struct (TypeDescription/createStruct)]
+                    (doseq [[k v] opts]
+                      (.addField struct (name k) (typedef->schema v)))
+                    struct)
+      ::union     (let [utype (TypeDescription/createUnion)]
+                    (doseq [child opts]
+                      (.addUnionChild utype (typedef->schema child)))
+                    utype))))
 
 (defn infer-typedesc [x]
-  (str (type-description (typedef x))))
+  (str (typedef->schema (typedef x))))
+
+;; https://cwiki.apache.org/confluence/display/Hive/LanguageManual+Types
+(derive ::array    ::compound)
+(derive ::map      ::compound)
+(derive ::struct   ::compound)
+(derive ::union    ::compound)
+
+(derive ::tinyint  ::integral)
+(derive ::smallint ::integral)
+(derive ::int      ::integral)
+(derive ::bigint   ::integral)
+
+(def sizeof
+  {::tinyint  1
+   ::smallint 2
+   ::int      4
+   ::bigint   8
+   ::float    4
+   ::double   8})
+
+;; allows implicity conversion as documented in https://cwiki.apache.org/confluence/display/Hive/LanguageManual+Types#LanguageManualTypes-AllowedImplicitConversions
+(def implicit-conversions
+  {::tinyint  #{::smallint ::int ::bigint ::float ::double ::decimal ::string ::varchar}
+   ::smallint #{::int ::bigint ::float ::double ::decimal ::string ::varchar}
+   ::int      #{::bigint ::float ::double ::decimal ::string ::varchar}
+   ::bigint   #{::float ::double ::decimal ::string ::varchar}
+   ::float    #{::double ::decimal ::string ::varchar}
+   ::double   #{::decimal ::string ::varchar}
+   ::decimal  #{::string ::varchar}
+   ::string   #{::double ::decimal ::varchar}
+   ::varchar  #{::double ::decimal ::string}
+   ::timestap #{::string ::varchar}
+   ::date     #{::string ::varchar}})
+
+(defn coerce [x y]
+  (or (-> implicit-conversions x y)
+      (-> implicit-conversions y x)))
 
 (defn compound? [x]
   (isa? x ::compound))
@@ -293,24 +322,47 @@
 (defn primitive? [x]
   (not (compound? x)))
 
-(defn merge-schema
+;; (defn merge-schema
+;;   ([x] x)
+;;   ([x y]
+;;    (if (= x y)
+;;      x
+;;      (match [x y]
+;;        [[::union x-opts] [::union y-opts]]              (update x 1 set/union y-opts)
+;;        [[::struct x-opts] [::struct y-opts]]            (update x 1 #(merge-with merge-schema %1 y-opts))
+;;        [[::array x-opts] [::array y-opts]]              [::array (merge-schema x-opts y-opts)]
+;;        [[::union x-opts] [_ :guard #(not= % ::union)]]  (update x 1 conj y)
+;;        [[_ :guard #(not= % ::union)] [::union _]]       (update y 1 conj x)
+;;        [[_ :guard primitive?] [_ :guard primitive?]]    [::union #{x y}]
+;;        :else (pprint [x y])))))
+
+(defn dispatch-merge [x y]
+  (let [orc-type-x (if (vector? x) (first x) x)
+        orc-type-y (if (vector? y) (first y) y)]
+    (cond
+      (= x y) ::match
+      (and (isa? orc-type-x ::integral) (isa? orc-type-y ::integral)) ::integral
+      (contains? (get implicit-conversions x) y) ::coercible
+      :else #{x y})))
+
+(defmulti combine-typedef dispatch-merge)
+
+(defn merge-typedef
   ([x] x)
-  ([x y]
-   (if (= x y)
-     x
-     (match [x y]
-       [[::union x-opts] [::union y-opts]]              (update x 1 set/union y-opts)
-       [[::struct x-opts] [::struct y-opts]]            (update x 1 #(merge-with merge-schema %1 y-opts))
-       [[::array x-opts] [::array y-opts]]              [::array (merge-schema x-opts y-opts)]
-       [[::union x-opts] [_ :guard #(not= % ::union)]]  (update x 1 conj y)
-       [[_ :guard #(not= % ::union)] [::union _]]       (update y 1 conj x)
-       [[_ :guard primitive?] [_ :guard primitive?]]    [::union #{x y}]
-       :else (pprint [x y])))))
+  ([x y] (combine-typedef x y))
+  ([x y & more]
+   (reduce combine-typedef (combine-typedef x y) more)))
+
+(defmethod combine-typedef ::integral [x y]
+  (coerce x y))
+
+(defmethod combine-typedef ::match [x _]
+  x)
 
 (defn rows->schema [rows]
   (->> rows
        (map typedef)
-       (reduce merge-schema)))
+       (reduce merge-typedef)))
 
 (extend-protocol ByteConversion
   java.lang.String
@@ -318,11 +370,7 @@
 
 (extend-protocol InstantConversion
   Instant
-  (to-instant [x] x)
-
-  ;; org.joda.time.ReadableInstant
-  ;; (to-instant [x] (Instant/ofEpochMilli (.getMillis x)))
-  )
+  (to-instant [x] x))
 
 (extend-protocol LongConversion
   Number
@@ -330,9 +378,6 @@
 
   LocalDate
   (to-long [x] (.toEpochDay x))
-
-  ;; org.joda.time.LocalDate
-  ;; (to-long [x] (to-long (LocalDate/of (.getYear x) (.getMonthOfYear x) (.getDayOfMonth x))))
 
   Boolean
   (to-long [b] (case b true 1 false 0)))

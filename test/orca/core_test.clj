@@ -46,36 +46,32 @@
     (is (= ::orc/char (data-type \newline)))
     (is (= ::orc/char (data-type (char-array [\f \o \o])))))
   (testing "DateTime"
-    (is (= ::orc/timestamp (data-type (Instant/parse "2017-04-07T17:24:03.222Z"))))
-    ;;(is (= ::orc/timestamp (data-type (org.joda.time.DateTime/now))))
-    )
+    (is (= ::orc/timestamp (data-type (Instant/parse "2017-04-07T17:24:03.222Z")))))
   (testing "Date"
-    (is (= ::orc/date (data-type (LocalDate/of 2017 4 3))))
-    ;;(is (= ::orc/date (data-type (org.joda.time.LocalDate. 2017 1 2))))
-    ))
+    (is (= ::orc/date (data-type (LocalDate/of 2017 4 3))))))
 
 (deftest typedef-test
   (testing "Arrays"
-    (is (= [::orc/array [::orc/tinyint]] (typedef [1])))
-    (is (= [::orc/array [::orc/tinyint]] (typedef [1 -1])))
-    (is (= [::orc/array [::orc/tinyint]] (typedef [1 nil])))
-    (is (= [::orc/string] (typedef "foo"))))
+    (is (= [::orc/array ::orc/tinyint] (typedef [1])))
+    (is (= [::orc/array ::orc/tinyint] (typedef [1 -1])))
+    (is (= [::orc/array ::orc/tinyint] (typedef [1 nil])))
+    (is (= ::orc/string (typedef "foo"))))
   (testing "Arrays of compound types"
     (is (= [::orc/array
-            #{[::orc/struct {:a [::orc/tinyint]}]
+            #{[::orc/struct {:a ::orc/tinyint}]
               [::orc/struct
-               {:a [::orc/smallint],
-                :b [::orc/string]}]
-              [::orc/struct {:a [::orc/smallint]}]}]
+               {:a ::orc/smallint,
+                :b ::orc/string}]
+              [::orc/struct {:a ::orc/smallint}]}]
            (typedef [{:a 1} {:a 10000} {:a 10001 :b "foo"}]))))
   (testing "Map"
     (is (= [::orc/struct
-            {:a    [::orc/tinyint]
-             "foo" [::orc/string]
-             10    [::orc/tinyint]}]
+            {:a    ::orc/tinyint
+             "foo" ::orc/string
+             10    ::orc/tinyint}]
            (typedef {:a 1 "foo" "bar" 10 11})))))
 
-(deftest type-description-test
+(deftest typedef->schema-test
   (testing "numeric"
     (is (= "tinyint" (infer-typedesc 1)))
     (is (= "smallint" (infer-typedesc 128)))
@@ -94,19 +90,27 @@
   (testing "timestamp"
     (is (= "timestamp" (infer-typedesc (Instant/now))))))
 
-(deftest merge-schema-test
-  (testing "combining two different types yields a union"
-    (is (= [::orc/array [::orc/union #{[::orc/tinyint] [::orc/int]}]]
-           (merge-schema (typedef [1]) (typedef [Integer/MAX_VALUE])))))
-  (testing "two different untions"
-    (is (= [::orc/union #{[::orc/tinyint] [::orc/string] [::orc/boolean]}]
-           (merge-schema [::orc/union #{[::orc/string] [::orc/boolean]}] [::orc/union #{[::orc/boolean] [::orc/tinyint]}]))))
-  (testing "union vs non-union primitive"
-    (is (= [::orc/union #{[::orc/tinyint] [::orc/string]}]
-           (merge-schema [::orc/union #{[::orc/tinyint] [::orc/string]}] [::orc/string]))))
-  (testing "merging two structs"
-    (is (= [::orc/struct {:x [::orc/tinyint] :y [::orc/boolean]}]
-           (merge-schema [::orc/struct {:x [::orc/tinyint]}] [::orc/struct {:y [::orc/boolean]}])))))
+(deftest merge-typedef-test
+  ;; (testing "combining two different types yields a union"
+  ;;   (is (= [::orc/array [::orc/union #{::orc/tinyint ::orc/int}]]
+  ;;          (merge-typedef (typedef [1]) (typedef [Integer/MAX_VALUE])))))
+  ;; (testing "two different untions"
+  ;;   (is (= [::orc/union #{[::orc/tinyint] [::orc/string] [::orc/boolean]}]
+  ;;          (merge-typedef [::orc/union #{[::orc/string] [::orc/boolean]}] [::orc/union #{[::orc/boolean] [::orc/tinyint]}]))))
+  ;; (testing "union vs non-union primitive"
+  ;;   (is (= [::orc/union #{[::orc/tinyint] [::orc/string]}]
+  ;;          (merge-typedef [::orc/union #{[::orc/tinyint] [::orc/string]}] [::orc/string]))))
+  ;; (testing "merging two structs"
+  ;;   (is (= [::orc/struct {:x [::orc/tinyint] :y [::orc/boolean]}]
+  ;;          (merge-typedef [::orc/struct {:x [::orc/tinyint]}] [::orc/struct {:y [::orc/boolean]}]))))
+  (testing "primitive integers"
+    (is (= ::orc/smallint (merge-typedef ::orc/smallint ::orc/tinyint)))
+    (is (= ::orc/bigint (merge-typedef ::orc/smallint ::orc/bigint)))
+    (is (= ::orc/smallint (merge-typedef ::orc/tinyint ::orc/smallint)))
+    (is (= ::orc/smallint (merge-typedef ::orc/smallint ::orc/smallint)))
+    (is (= [::orc/smallint] (merge-typedef [::orc/smallint] [::orc/smallint]))))
+  (testing "single values"
+    (is (= ::smallint (merge-typedef ::smallint)))))
 
 (defn roundtrip [input schema]
   (let [tmp    (tmp-path)
@@ -117,7 +121,7 @@
         (.delete (io/file tmp))))))
 
 (deftest round-trip-test
-  (testing "single vector"
+  (testing "single int"
     (let [in [[1] [2] [3]]]
       (is (= in (frame->vecs (roundtrip in "struct<x:int>"))))))
   (testing "two vectors of different types"
@@ -143,12 +147,8 @@
     (let [in [['((1 2 3))]]]
       (is (= in (frame->vecs (roundtrip in "struct<y:array<array<int>>>")))))))
 
-;; (deftest to-instance-test
-;;   (is (= (Instant/parse "2017-04-07T17:13:19.581Z") (to-instant (org.joda.time.DateTime/parse "2017-04-07T17:13:19.581Z")))))
-
 (deftest to-long-test
   (testing "date"
-    ;;(is (= 17168 (to-long (org.joda.time.LocalDate. 2017 1 2))))
     (is (= 17168 (to-long (LocalDate/of 2017 1 2)))))
   (testing "boolean"
     (is (= 1 (to-long true)))
