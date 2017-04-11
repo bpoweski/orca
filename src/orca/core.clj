@@ -38,19 +38,19 @@
   (read-value [col schema idx]))
 
 (defprotocol ColumnValueWriter
-  (write-value [col idx v]))
+  (write-value [col idx v opts]))
 
 (defprotocol ByteConversion
   (to-bytes [x]))
 
 (defprotocol RowWriter
-  (write-row! [row batch idx schema]))
+  (write-row! [row batch idx schema opts]))
 
 (defprotocol LongConversion
   (to-long [ld]))
 
 (defprotocol InstantConversion
-  (to-instant [ld]))
+  (to-instant [ld opts]))
 
 (defn decode-column [^ColumnVector col schema nrows]
   (loop [idx 0
@@ -170,10 +170,6 @@
   java.time.Instant
   (data-type [v] ::timestamp)
   (data-props [v])
-
-  ;; org.joda.time.DateTime
-  ;; (data-type [v] ::timestamp)
-  ;; (data-props [v])
 
   ;; uniontype  UnionColumnVector
 
@@ -370,7 +366,10 @@
 
 (extend-protocol InstantConversion
   Instant
-  (to-instant [x] x))
+  (to-instant [x _] x)
+
+  String
+  (to-instant [x opts] (Instant/parse x)))
 
 (extend-protocol LongConversion
   Number
@@ -396,7 +395,7 @@
       (aget (.vector arr) idx)))
 
   ColumnValueWriter
-  (write-value [col idx v]
+  (write-value [col idx v opts]
     (aset-long (.vector col) idx (to-long v))))
 
 (extend-type BytesColumnVector
@@ -405,7 +404,7 @@
     (String. ^"[B" (aget (.vector arr) idx) (aget (.start arr) idx) (aget (.length arr) idx) serialization-charset))
 
   ColumnValueWriter
-  (write-value [col idx v]
+  (write-value [col idx v opts]
     (.setVal col idx (to-bytes v))))
 
 (extend-type TimestampColumnVector
@@ -414,8 +413,8 @@
     (.plusNanos (Instant/ofEpochMilli (aget (.time arr) idx)) (.getNanos arr idx)))
 
   ColumnValueWriter
-  (write-value [col idx v]
-    (.set col idx (java.sql.Timestamp/from ^Instant (to-instant v)))))
+  (write-value [col idx v opts]
+    (.set col idx (java.sql.Timestamp/from ^Instant (to-instant v opts)))))
 
 (extend-type ListColumnVector
   ColumnValueReader
@@ -427,7 +426,7 @@
       (mapv #(read-value child-col child-schema %) (range offset (+ offset len)))))
 
   ColumnValueWriter
-  (write-value [col idx v]
+  (write-value [col idx v opts]
     (let [child-col   (.child col)
           child-count (.childCount col)
           elems       (count v)
@@ -435,7 +434,7 @@
           _           (.ensureSize child-col (+ child-count elems) true)]
       (doseq [elem v
               :let [child-offset (.childCount col)]]
-        (write-value (.child col) child-offset elem)
+        (write-value (.child col) child-offset elem opts)
         (set! (.childCount col) (inc child-offset)))
       (aset-long (.lengths col) idx elems))))
 
@@ -445,19 +444,19 @@
 
 (extend-protocol RowWriter
   clojure.lang.IPersistentMap
-  (write-row! [row ^VectorizedRowBatch batch idx ^TypeDescription schema]
+  (write-row! [row ^VectorizedRowBatch batch idx ^TypeDescription schema opts]
     (doseq [[^ColumnVector col field] (map vector (.cols batch) (.getFieldNames schema))]
       (let [val (get row (keyword field))]
         (if (nil? val)
           (set-null! col idx)
-          (write-value col idx val)))))
+          (write-value col idx val opts)))))
 
   clojure.lang.Sequential
-  (write-row! [row ^VectorizedRowBatch batch idx schema]
+  (write-row! [row ^VectorizedRowBatch batch idx schema opts]
     (doseq [[^ColumnVector col v] (map vector (.cols batch) row)]
       (if (nil? v)
         (set-null! col idx)
-        (write-value col idx v)))))
+        (write-value col idx v opts)))))
 
 (defn write-rows
   "Write row-seq into an ORC file at path.
@@ -465,7 +464,7 @@
   Options:
 
   :overwrite?  - overwrites path if a file exists."
-  [path row-seq schema & {:keys [overwrite?] :or {overwrite? false}}]
+  [path row-seq schema & {:keys [overwrite?] :or {overwrite? false} :as opts}]
   (try
     (when overwrite?
       (.delete (io/file path)))
@@ -481,7 +480,7 @@
           (doseq [row row-batch
                   :let [idx (.size batch)]]
             (set! (.size batch) (inc idx))
-            (write-row! row batch idx schema))
+            (write-row! row batch idx schema opts))
           (.addRowBatch writer batch)
           (.reset batch))
         (finally

@@ -121,31 +121,22 @@
         (.delete (io/file tmp))))))
 
 (deftest round-trip-test
-  (testing "single int"
-    (let [in [[1] [2] [3]]]
-      (is (= in (frame->vecs (roundtrip in "struct<x:int>"))))))
-  (testing "two vectors of different types"
-    (let [in [[1 "a"] [2 "b"]]]
-      (is (= in (frame->vecs (roundtrip in "struct<x:int,y:string>"))))))
-  (testing "two vectors with nils"
-    (let [out (roundtrip [[nil "a"] [2 nil]] "struct<x:int,y:string>")]
-      (is (= {:x [nil 2] :y ["a" nil]} out))))
-  (testing "writing map into a struct"
-    (let [out (roundtrip [{:x "foo" :y 10} {:x "bar" :y 100000} {:z false}] "struct<x:string,y:int>")]
-      (is (= {:x ["foo" "bar" nil] :y [10 100000 nil]} out))))
-  (testing "date"
-    (let [in [[(LocalDate/of 2017 4 7)] [nil]]]
-      (is (= in (frame->vecs (roundtrip in "struct<y:date>"))))))
-  (testing "timestamp"
-    (let [in [[(Instant/parse "2017-04-07T17:13:19.581Z")] [nil]]]
-      (is (= in (frame->vecs (roundtrip in "struct<y:timestamp>"))))))
-  (testing "array"
-    (let [in [['()] [nil]]]
-      (is (= in (frame->vecs (roundtrip in "struct<y:array<string>>")))))
-    (let [in [['()] ['(1 2 3)]]]
-      (is (= in (frame->vecs (roundtrip in "struct<y:array<int>>")))))
-    (let [in [['((1 2 3))]]]
-      (is (= in (frame->vecs (roundtrip in "struct<y:array<array<int>>>")))))))
+  (testing "vectors"
+    (are [schema in] (= in (frame->vecs (roundtrip in schema)))
+      "struct<x:int>"               [[1] [2] [3]]
+      "struct<x:int,y:string>"      [[1 "a"] [2 "b"]]
+      "struct<y:date>"              [[(LocalDate/of 2017 4 7)] [nil]]
+      "struct<y:timestamp>"         [[(Instant/parse "2017-04-07T17:13:19.581Z")] [nil]]
+      "struct<y:array<string>>"     [['()] [nil]]
+      "struct<y:array<int>>"        [['()] ['(1 2 3)]]
+      "struct<y:array<array<int>>>" [['((1 2 3))]]))
+  (testing "frames"
+    (are [schema in frame] (= frame (roundtrip in schema))
+      "struct<x:int,y:string>"      [[nil "a"] [2 nil]]                                {:x [nil 2] :y ["a" nil]}
+      "struct<x:string,y:int>"      [{:x "foo" :y 10} {:x "bar" :y 100000} {:z false}] {:x ["foo" "bar" nil] :y [10 100000 nil]}))
+  (testing "type coersion"
+    (are [schema in out] (= out (frame->vecs (roundtrip in schema)))
+      "struct<x:timestamp>"        [["2017-04-07T17:13:19.581Z"]]  [[(Instant/parse "2017-04-07T17:13:19.581Z")]])))
 
 (deftest to-long-test
   (testing "date"
@@ -154,3 +145,7 @@
     (is (= 1 (to-long true)))
     (is (= 0 (to-long false)))
     (is (= 1 (to-long 1)))))
+
+(deftest to-instant-test
+  (testing "strings"
+    (is (= (Instant/parse "2017-04-07T17:13:19.581Z") (to-instant "2017-04-07T17:13:19.581Z" {})))))
