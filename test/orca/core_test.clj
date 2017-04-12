@@ -123,13 +123,15 @@
 (deftest round-trip-test
   (testing "vectors"
     (are [schema in] (= in (frame->vecs (roundtrip in schema)))
-      "struct<x:int>"               [[1] [2] [3]]
-      "struct<x:int,y:string>"      [[1 "a"] [2 "b"]]
-      "struct<y:date>"              [[(LocalDate/of 2017 4 7)] [nil]]
-      "struct<y:timestamp>"         [[(Instant/parse "2017-04-07T17:13:19.581Z")] [nil]]
-      "struct<y:array<string>>"     [['()] [nil]]
-      "struct<y:array<int>>"        [['()] ['(1 2 3)]]
-      "struct<y:array<array<int>>>" [['((1 2 3))]]))
+      "struct<x:int>"                    [[1] [2] [3]]
+      "struct<x:int,y:string>"           [[1 "a"] [2 "b"]]
+      "struct<y:date>"                   [[(LocalDate/of 2017 4 7)] [nil]]
+      "struct<y:timestamp>"              [[(Instant/parse "2017-04-07T17:13:19.581Z")] [nil]]
+      "struct<y:array<string>>"          [['()] [nil]]
+      "struct<y:array<int>>"             [['()] ['(1 2 3)]]
+      "struct<y:array<array<int>>>"      [['((1 2 3))]]
+      "struct<y:struct<x:int>>"          [[{:x 1}]]
+      "struct<y:struct<x:int,y:string>>" [[{:x 1}]]))
   (testing "frames"
     (are [schema in frame] (= frame (roundtrip in schema))
       "struct<x:int,y:string>"      [[nil "a"] [2 nil]]                                {:x [nil 2] :y ["a" nil]}

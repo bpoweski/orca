@@ -6,7 +6,7 @@
             [clojure.core.match :refer [match]]
             [cheshire.core :as json])
   (:import [org.apache.hadoop.hive.ql.exec.vector
-            VectorizedRowBatch ColumnVector DecimalColumnVector LongColumnVector BytesColumnVector TimestampColumnVector ListColumnVector]
+            VectorizedRowBatch ColumnVector DecimalColumnVector LongColumnVector BytesColumnVector TimestampColumnVector ListColumnVector StructColumnVector]
            [org.apache.orc OrcFile Reader Writer TypeDescription TypeDescription$Category]
            [org.apache.hadoop.conf Configuration]
            [org.apache.hadoop.fs Path]
@@ -38,7 +38,7 @@
   (read-value [col schema idx]))
 
 (defprotocol ColumnValueWriter
-  (write-value [col idx v opts]))
+  (write-value [col idx v schema opts]))
 
 (defprotocol ByteConversion
   (to-bytes [x]))
@@ -360,6 +360,10 @@
        (map typedef)
        (reduce merge-typedef)))
 
+(defn set-null! [^ColumnVector col ^long idx]
+  (set! (.noNulls col) false)
+  (aset-boolean (.isNull col) idx true))
+
 (extend-protocol ByteConversion
   java.lang.String
   (to-bytes [s] (.getBytes s serialization-charset)))
@@ -395,16 +399,17 @@
       (aget (.vector arr) idx)))
 
   ColumnValueWriter
-  (write-value [col idx v opts]
+  (write-value [col idx v _ opts]
     (aset-long (.vector col) idx (to-long v))))
 
 (extend-type BytesColumnVector
   ColumnValueReader
   (read-value [arr schema idx]
-    (String. ^"[B" (aget (.vector arr) idx) (aget (.start arr) idx) (aget (.length arr) idx) serialization-charset))
+    (when-let [ba (aget (.vector arr) idx)]
+      (String. ^"[B" ba (aget (.start arr) idx) (aget (.length arr) idx) serialization-charset)))
 
   ColumnValueWriter
-  (write-value [col idx v opts]
+  (write-value [col idx v _ opts]
     (.setVal col idx (to-bytes v))))
 
 (extend-type TimestampColumnVector
@@ -413,7 +418,7 @@
     (.plusNanos (Instant/ofEpochMilli (aget (.time arr) idx)) (.getNanos arr idx)))
 
   ColumnValueWriter
-  (write-value [col idx v opts]
+  (write-value [col idx v schema opts]
     (.set col idx (java.sql.Timestamp/from ^Instant (to-instant v opts)))))
 
 (extend-type ListColumnVector
@@ -426,37 +431,56 @@
       (mapv #(read-value child-col child-schema %) (range offset (+ offset len)))))
 
   ColumnValueWriter
-  (write-value [col idx v opts]
-    (let [child-col   (.child col)
-          child-count (.childCount col)
-          elems       (count v)
-          _           (aset-long (.offsets col) idx child-count)
-          _           (.ensureSize child-col (+ child-count elems) true)]
+  (write-value [col idx v ^TypeDescription schema opts]
+    (let [child-col    (.child col)
+          child-count  (.childCount col)
+          child-schema (first (.getChildren schema))
+          elems        (count v)
+          _            (aset-long (.offsets col) idx child-count)
+          _            (.ensureSize child-col (+ child-count elems) true)]
       (doseq [elem v
               :let [child-offset (.childCount col)]]
-        (write-value (.child col) child-offset elem opts)
+        (write-value (.child col) child-offset elem child-schema opts)
         (set! (.childCount col) (inc child-offset)))
       (aset-long (.lengths col) idx elems))))
 
-(defn set-null! [^ColumnVector col ^long idx]
-  (set! (.noNulls col) false)
-  (aset-boolean (.isNull col) idx true))
+(extend-type StructColumnVector
+  ColumnValueReader
+  (read-value [col ^TypeDescription schema idx]
+    (reduce
+     (fn [m [^ColumnVector field-col field-name ^TypeDescription field-type]]
+       (let [v (read-value field-col field-type idx)]
+         (if (nil? v)
+           m
+           (assoc m (keyword field-name) v))))
+     {}
+     (map vector (.fields col) (.getFieldNames schema) (.getChildren schema))))
+
+  ColumnValueWriter
+  (write-value [col idx v ^TypeDescription schema opts]
+    (if (nil? v)
+      (set-null! col idx)
+      (doseq [[^ColumnVector field-col field-name ^TypeDescription field-type] (map vector (.fields col) (.getFieldNames schema) (.getChildren schema))
+              :let [field-value (get v (keyword field-name))]]
+        (if (nil? field-value)
+          (set-null! field-col idx)
+          (write-value field-col idx field-value field-type opts))))))
 
 (extend-protocol RowWriter
   clojure.lang.IPersistentMap
   (write-row! [row ^VectorizedRowBatch batch idx ^TypeDescription schema opts]
-    (doseq [[^ColumnVector col field] (map vector (.cols batch) (.getFieldNames schema))]
+    (doseq [[^ColumnVector col field child] (map vector (.cols batch) (.getFieldNames schema) (.getChildren schema))]
       (let [val (get row (keyword field))]
         (if (nil? val)
           (set-null! col idx)
-          (write-value col idx val opts)))))
+          (write-value col idx val child opts)))))
 
   clojure.lang.Sequential
-  (write-row! [row ^VectorizedRowBatch batch idx schema opts]
-    (doseq [[^ColumnVector col v] (map vector (.cols batch) row)]
+  (write-row! [row ^VectorizedRowBatch batch idx ^TypeDescription schema opts]
+    (doseq [[^ColumnVector col v child] (map vector (.cols batch) row (.getChildren schema))]
       (if (nil? v)
         (set-null! col idx)
-        (write-value col idx v opts)))))
+        (write-value col idx v child opts)))))
 
 (defn write-rows
   "Write row-seq into an ORC file at path.
