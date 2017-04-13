@@ -6,7 +6,8 @@
             [clojure.core.match :refer [match]]
             [cheshire.core :as json])
   (:import [org.apache.hadoop.hive.ql.exec.vector
-            VectorizedRowBatch ColumnVector DecimalColumnVector LongColumnVector BytesColumnVector TimestampColumnVector ListColumnVector StructColumnVector]
+            VectorizedRowBatch ColumnVector DecimalColumnVector DoubleColumnVector LongColumnVector BytesColumnVector TimestampColumnVector
+            ListColumnVector StructColumnVector]
            [org.apache.orc OrcFile Reader Writer TypeDescription TypeDescription$Category]
            [org.apache.hadoop.conf Configuration]
            [org.apache.hadoop.fs Path]
@@ -318,27 +319,14 @@
 (defn primitive? [x]
   (not (compound? x)))
 
-;; (defn merge-schema
-;;   ([x] x)
-;;   ([x y]
-;;    (if (= x y)
-;;      x
-;;      (match [x y]
-;;        [[::union x-opts] [::union y-opts]]              (update x 1 set/union y-opts)
-;;        [[::struct x-opts] [::struct y-opts]]            (update x 1 #(merge-with merge-schema %1 y-opts))
-;;        [[::array x-opts] [::array y-opts]]              [::array (merge-schema x-opts y-opts)]
-;;        [[::union x-opts] [_ :guard #(not= % ::union)]]  (update x 1 conj y)
-;;        [[_ :guard #(not= % ::union)] [::union _]]       (update y 1 conj x)
-;;        [[_ :guard primitive?] [_ :guard primitive?]]    [::union #{x y}]
-;;        :else (pprint [x y])))))
-
 (defn dispatch-merge [x y]
   (let [orc-type-x (if (vector? x) (first x) x)
         orc-type-y (if (vector? y) (first y) y)]
     (cond
       (= x y) ::match
       (and (isa? orc-type-x ::integral) (isa? orc-type-y ::integral)) ::integral
-      (contains? (get implicit-conversions x) y) ::coercible
+      (= orc-type-x orc-type-y ::struct) ::struct
+      (boolean (coerce x y)) ::coercible
       :else #{x y})))
 
 (defmulti combine-typedef dispatch-merge)
@@ -349,13 +337,26 @@
   ([x y & more]
    (reduce combine-typedef (combine-typedef x y) more)))
 
+(defmethod combine-typedef :default [x y]
+  (println [x y])
+  (throw (ex-info "unable to combine-typedef" {:x x :y y})))
+
 (defmethod combine-typedef ::integral [x y]
+  (coerce x y))
+
+(defmethod combine-typedef ::coercible [x y]
   (coerce x y))
 
 (defmethod combine-typedef ::match [x _]
   x)
 
-(defn rows->schema [rows]
+(defmethod combine-typedef ::struct [[_ x] [_ y]]
+  [::struct (reduce-kv (fn [m field field-type]
+                         (assoc m field (combine-typedef (get x field field-type) field-type)))
+                       x
+                       y)])
+
+(defn rows->typedef [rows]
   (->> rows
        (map typedef)
        (reduce merge-typedef)))
@@ -401,6 +402,15 @@
   ColumnValueWriter
   (write-value [col idx v _ opts]
     (aset-long (.vector col) idx (to-long v))))
+
+(extend-type DoubleColumnVector
+  ColumnValueReader
+  (read-value [arr ^TypeDescription schema idx]
+    (aget (.vector arr) idx))
+
+  ColumnValueWriter
+  (write-value [col idx v _ opts]
+    (aset-double (.vector col) idx (double v))))
 
 (extend-type BytesColumnVector
   ColumnValueReader

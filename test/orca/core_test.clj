@@ -103,12 +103,16 @@
   ;; (testing "merging two structs"
   ;;   (is (= [::orc/struct {:x [::orc/tinyint] :y [::orc/boolean]}]
   ;;          (merge-typedef [::orc/struct {:x [::orc/tinyint]}] [::orc/struct {:y [::orc/boolean]}]))))
+  (testing "structs"
+    (is (= [::orc/struct {:x [::orc/tinyint] :y [::orc/boolean]}] (merge-typedef [::orc/struct {:x [::orc/tinyint]}] [::orc/struct {:y [::orc/boolean]}]))))
   (testing "primitive integers"
     (is (= ::orc/smallint (merge-typedef ::orc/smallint ::orc/tinyint)))
     (is (= ::orc/bigint (merge-typedef ::orc/smallint ::orc/bigint)))
     (is (= ::orc/smallint (merge-typedef ::orc/tinyint ::orc/smallint)))
     (is (= ::orc/smallint (merge-typedef ::orc/smallint ::orc/smallint)))
     (is (= [::orc/smallint] (merge-typedef [::orc/smallint] [::orc/smallint]))))
+  (testing "coercible"
+    (is (= ::orc/double (merge-typedef ::orc/double ::orc/tinyint))))
   (testing "single values"
     (is (= ::smallint (merge-typedef ::smallint)))))
 
@@ -131,7 +135,8 @@
       "struct<y:array<int>>"             [['()] ['(1 2 3)]]
       "struct<y:array<array<int>>>"      [['((1 2 3))]]
       "struct<y:struct<x:int>>"          [[{:x 1}]]
-      "struct<y:struct<x:int,y:string>>" [[{:x 1}]]))
+      "struct<y:struct<x:int,y:string>>" [[{:x 1}]]
+      "struct<x:double>"                 [[1.00]]))
   (testing "frames"
     (are [schema in frame] (= frame (roundtrip in schema))
       "struct<x:int,y:string>"      [[nil "a"] [2 nil]]                                {:x [nil 2] :y ["a" nil]}
