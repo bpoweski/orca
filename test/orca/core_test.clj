@@ -91,18 +91,6 @@
     (is (= "timestamp" (infer-typedesc (Instant/now))))))
 
 (deftest merge-typedef-test
-  ;; (testing "combining two different types yields a union"
-  ;;   (is (= [::orc/array [::orc/union #{::orc/tinyint ::orc/int}]]
-  ;;          (merge-typedef (typedef [1]) (typedef [Integer/MAX_VALUE])))))
-  ;; (testing "two different untions"
-  ;;   (is (= [::orc/union #{[::orc/tinyint] [::orc/string] [::orc/boolean]}]
-  ;;          (merge-typedef [::orc/union #{[::orc/string] [::orc/boolean]}] [::orc/union #{[::orc/boolean] [::orc/tinyint]}]))))
-  ;; (testing "union vs non-union primitive"
-  ;;   (is (= [::orc/union #{[::orc/tinyint] [::orc/string]}]
-  ;;          (merge-typedef [::orc/union #{[::orc/tinyint] [::orc/string]}] [::orc/string]))))
-  ;; (testing "merging two structs"
-  ;;   (is (= [::orc/struct {:x [::orc/tinyint] :y [::orc/boolean]}]
-  ;;          (merge-typedef [::orc/struct {:x [::orc/tinyint]}] [::orc/struct {:y [::orc/boolean]}]))))
   (testing "structs"
     (is (= [::orc/struct {:x [::orc/tinyint] :y [::orc/boolean]}] (merge-typedef [::orc/struct {:x [::orc/tinyint]}] [::orc/struct {:y [::orc/boolean]}]))))
   (testing "primitive integers"
@@ -114,7 +102,15 @@
   (testing "coercible"
     (is (= ::orc/double (merge-typedef ::orc/double ::orc/tinyint))))
   (testing "single values"
-    (is (= ::smallint (merge-typedef ::smallint)))))
+    (is (= ::smallint (merge-typedef ::smallint))))
+  (testing "arrays"
+    (is (= [::orc/array ::orc/int] (merge-typedef [::orc/array ::orc/tinyint] [::orc/array ::orc/int])))))
+
+(deftest simplify-typedef-test
+  (testing "arrays"
+    (is (= [::orc/array ::orc/int] (simplify-typedef [::orc/array #{::orc/tinyint ::orc/int}]))))
+  (testing "struct with array"
+    (is (= [::orc/struct {:values [::orc/array ::orc/int]}] (simplify-typedef [::orc/struct {:values [::orc/array #{::orc/tinyint ::orc/int}]}])))))
 
 (defn roundtrip [input schema]
   (let [tmp    (tmp-path)

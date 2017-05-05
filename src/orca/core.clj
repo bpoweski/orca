@@ -3,8 +3,7 @@
             [clojure.pprint :refer [pprint]]
             [clojure.data :refer [diff]]
             [clojure.set :as set]
-            [clojure.core.match :refer [match]]
-            [cheshire.core :as json])
+            [clojure.string :as str])
   (:import [org.apache.hadoop.hive.ql.exec.vector
             VectorizedRowBatch ColumnVector DecimalColumnVector DoubleColumnVector LongColumnVector BytesColumnVector TimestampColumnVector
             ListColumnVector StructColumnVector]
@@ -83,6 +82,31 @@
       (if (.nextBatch record-reader batch)
         (recur (read-batch frame batch schema))
         frame))))
+
+;; https://cwiki.apache.org/confluence/display/Hive/LanguageManual+Types
+(derive ::array    ::compound)
+(derive ::map      ::compound)
+(derive ::struct   ::compound)
+(derive ::union    ::compound)
+
+(derive ::tinyint  ::integral)
+(derive ::smallint ::integral)
+(derive ::int      ::integral)
+(derive ::bigint   ::integral)
+
+;; allows implicity conversion as documented in https://cwiki.apache.org/confluence/display/Hive/LanguageManual+Types#LanguageManualTypes-AllowedImplicitConversions
+(def implicit-conversions
+  {::tinyint  #{::smallint ::int ::bigint ::float ::double ::decimal ::string ::varchar}
+   ::smallint #{::int ::bigint ::float ::double ::decimal ::string ::varchar}
+   ::int      #{::bigint ::float ::double ::decimal ::string ::varchar}
+   ::bigint   #{::float ::double ::decimal ::string ::varchar}
+   ::float    #{::double ::decimal ::string ::varchar}
+   ::double   #{::decimal ::string ::varchar}
+   ::decimal  #{::string ::varchar}
+   ::string   #{::double ::decimal ::varchar}
+   ::varchar  #{::double ::decimal ::string}
+   ::timestap #{::string ::varchar}
+   ::date     #{::string ::varchar}})
 
 (defprotocol TypeInference
   (data-type [v])
@@ -276,39 +300,6 @@
 (defn infer-typedesc [x]
   (str (typedef->schema (typedef x))))
 
-;; https://cwiki.apache.org/confluence/display/Hive/LanguageManual+Types
-(derive ::array    ::compound)
-(derive ::map      ::compound)
-(derive ::struct   ::compound)
-(derive ::union    ::compound)
-
-(derive ::tinyint  ::integral)
-(derive ::smallint ::integral)
-(derive ::int      ::integral)
-(derive ::bigint   ::integral)
-
-(def sizeof
-  {::tinyint  1
-   ::smallint 2
-   ::int      4
-   ::bigint   8
-   ::float    4
-   ::double   8})
-
-;; allows implicity conversion as documented in https://cwiki.apache.org/confluence/display/Hive/LanguageManual+Types#LanguageManualTypes-AllowedImplicitConversions
-(def implicit-conversions
-  {::tinyint  #{::smallint ::int ::bigint ::float ::double ::decimal ::string ::varchar}
-   ::smallint #{::int ::bigint ::float ::double ::decimal ::string ::varchar}
-   ::int      #{::bigint ::float ::double ::decimal ::string ::varchar}
-   ::bigint   #{::float ::double ::decimal ::string ::varchar}
-   ::float    #{::double ::decimal ::string ::varchar}
-   ::double   #{::decimal ::string ::varchar}
-   ::decimal  #{::string ::varchar}
-   ::string   #{::double ::decimal ::varchar}
-   ::varchar  #{::double ::decimal ::string}
-   ::timestap #{::string ::varchar}
-   ::date     #{::string ::varchar}})
-
 (defn coerce [x y]
   (or (-> implicit-conversions x y)
       (-> implicit-conversions y x)))
@@ -319,27 +310,36 @@
 (defn primitive? [x]
   (not (compound? x)))
 
+(defn type-of [x]
+  (if (vector? x)
+    (first x)
+    x))
+
 (defn dispatch-merge [x y]
-  (let [orc-type-x (if (vector? x) (first x) x)
-        orc-type-y (if (vector? y) (first y) y)]
-    (cond
-      (= x y) ::match
-      (and (isa? orc-type-x ::integral) (isa? orc-type-y ::integral)) ::integral
-      (= orc-type-x orc-type-y ::struct) ::struct
-      (boolean (coerce x y)) ::coercible
-      :else #{x y})))
+  (let [x-type (type-of x)
+        y-type (type-of y)
+        val (cond
+              (= x y) ::match
+              (= x-type y-type ::array) ::array
+              (and (isa? x-type ::integral) (isa? y-type ::integral)) ::integral
+              (= x-type y-type ::struct) ::struct
+              (boolean (coerce x y)) ::coercible
+              :else #{x y})]
+    val))
 
 (defmulti combine-typedef dispatch-merge)
+(defmulti simplify-typedef type-of)
+
+(defmethod combine-typedef :default [x y]
+  (throw (ex-info "unable to combine-typedef" {:x x :y y})))
+
+(defmethod simplify-typedef :default [x] x)
 
 (defn merge-typedef
   ([x] x)
   ([x y] (combine-typedef x y))
   ([x y & more]
-   (reduce combine-typedef (combine-typedef x y) more)))
-
-(defmethod combine-typedef :default [x y]
-  (println [x y])
-  (throw (ex-info "unable to combine-typedef" {:x x :y y})))
+   (reduce merge-typedef (merge-typedef x y) more)))
 
 (defmethod combine-typedef ::integral [x y]
   (coerce x y))
@@ -350,15 +350,27 @@
 (defmethod combine-typedef ::match [x _]
   x)
 
+(defmethod combine-typedef ::array [[_ x] [_ y]]
+  [::array (merge-typedef x y)])
+
+(defmethod simplify-typedef ::array [x]
+  (let [[_ x-params] x]
+    (if (set? x-params)
+      [::array (reduce merge-typedef (map simplify-typedef x-params))]
+      x)))
+
 (defmethod combine-typedef ::struct [[_ x] [_ y]]
   [::struct (reduce-kv (fn [m field field-type]
-                         (assoc m field (combine-typedef (get x field field-type) field-type)))
+                         (assoc m field (merge-typedef (get x field field-type) field-type)))
                        x
                        y)])
 
+(defmethod simplify-typedef ::struct [[_ x]]
+  [::struct (reduce-kv #(assoc %1 %2 (simplify-typedef %3)) {} x)])
+
 (defn rows->typedef [rows]
   (->> rows
-       (map typedef)
+       (map (comp simplify-typedef typedef))
        (reduce merge-typedef)))
 
 (defn set-null! [^ColumnVector col ^long idx]
