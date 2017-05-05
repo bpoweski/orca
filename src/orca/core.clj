@@ -317,15 +317,14 @@
 
 (defn dispatch-merge [x y]
   (let [x-type (type-of x)
-        y-type (type-of y)
-        val (cond
-              (= x y) ::match
-              (= x-type y-type ::array) ::array
-              (and (isa? x-type ::integral) (isa? y-type ::integral)) ::integral
-              (= x-type y-type ::struct) ::struct
-              (boolean (coerce x y)) ::coercible
-              :else #{x y})]
-    val))
+        y-type (type-of y)]
+    (cond
+      (= x y) ::match
+      (= x-type y-type ::array) ::array
+      (and (isa? x-type ::integral) (isa? y-type ::integral)) ::integral
+      (= x-type y-type ::struct) ::struct
+      (boolean (coerce x y)) ::coercible
+      :else #{x y})))
 
 (defmulti combine-typedef dispatch-merge)
 (defmulti simplify-typedef type-of)
@@ -532,7 +531,6 @@
         (finally
           (.close writer))))
     (catch Exception ex
-      (clojure.stacktrace/print-cause-trace ex)
       (throw ex))))
 
 (defn tmp-path []
