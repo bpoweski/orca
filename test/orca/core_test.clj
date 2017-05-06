@@ -51,11 +51,19 @@
     (is (= ::orc/date (data-type (LocalDate/of 2017 4 3))))))
 
 (deftest typedef-test
+  (testing "Strings"
+    (is (= ::orc/string (typedef "foo")))
+    (is (= ::orc/string (typedef "10")))
+    (is (= [::orc/decimal {:scale 0 :precision 2}] (typedef "10" {:coerce-decimal-strings? true})))
+    (is (= [::orc/decimal {:scale 0 :precision 2}] (typedef "10" {:coerce-decimal-strings? true})))
+    (is (= ::orc/date (typedef "2017-04-10" {:coerce-date-strings? true})))
+    (is (= ::orc/timestamp (typedef "2017-05-07T06:39:18Z" {:coerce-timestamp-strings? true}))))
+  (testing "Decimal"
+    (is (= [::orc/decimal {:scale 2 :precision 10}] (typedef 10M {:min-decimal-scale 2 :min-decimal-precision 10}))))
   (testing "Arrays"
     (is (= [::orc/array ::orc/tinyint] (typedef [1])))
     (is (= [::orc/array ::orc/tinyint] (typedef [1 -1])))
-    (is (= [::orc/array ::orc/tinyint] (typedef [1 nil])))
-    (is (= ::orc/string (typedef "foo"))))
+    (is (= [::orc/array ::orc/tinyint] (typedef [1 nil]))))
   (testing "Arrays of compound types"
     (is (= [::orc/array
             #{[::orc/struct {:a ::orc/tinyint}]
@@ -70,6 +78,9 @@
              "foo" ::orc/string
              10    ::orc/tinyint}]
            (typedef {:a 1 "foo" "bar" 10 11})))))
+
+(defn infer-typedesc [x]
+  (str (typedef->schema (typedef x))))
 
 (deftest typedef->schema-test
   (testing "numeric"
@@ -102,7 +113,11 @@
   (testing "coercible"
     (is (= ::orc/double (merge-typedef ::orc/double ::orc/tinyint))))
   (testing "single values"
-    (is (= ::smallint (merge-typedef ::smallint))))
+    (is (= ::orc/smallint (merge-typedef ::orc/smallint))))
+  (testing "string encoded types"
+    (is (= ::orc/string (merge-typedef [::orc/decimal {:scale 4 :precision 0}] ::orc/string))))
+  (testing "decimals"
+    (is (= [::orc/decimal {:scale 2, :precision 6}] (merge-typedef [::orc/decimal {:scale 2, :precision 6}] [::orc/decimal {:scale 1, :precision 6}]))))
   (testing "arrays"
     (is (= [::orc/array ::orc/int] (merge-typedef [::orc/array ::orc/tinyint] [::orc/array ::orc/int])))))
 
@@ -110,7 +125,10 @@
   (testing "arrays"
     (is (= [::orc/array ::orc/int] (simplify-typedef [::orc/array #{::orc/tinyint ::orc/int}]))))
   (testing "struct with array"
-    (is (= [::orc/struct {:values [::orc/array ::orc/int]}] (simplify-typedef [::orc/struct {:values [::orc/array #{::orc/tinyint ::orc/int}]}])))))
+    (is (= [::orc/struct {:values [::orc/array ::orc/int]}] (simplify-typedef [::orc/struct {:values [::orc/array #{::orc/tinyint ::orc/int}]}]))))
+  (testing "empty structs are pruned"
+    (is (= [::orc/struct {:a ::orc/tinyint}] (simplify-typedef [::orc/struct {:values [::orc/struct {}] :a ::orc/tinyint}])))
+    (is (nil? (simplify-typedef [::orc/struct {:values [::orc/struct {}]}])))))
 
 (defn roundtrip [input schema]
   (let [tmp    (tmp-path)
