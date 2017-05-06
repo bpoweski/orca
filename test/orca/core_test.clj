@@ -150,7 +150,8 @@
       "struct<y:array<array<int>>>"      [['((1 2 3))]]
       "struct<y:struct<x:int>>"          [[{:x 1}]]
       "struct<y:struct<x:int,y:string>>" [[{:x 1}]]
-      "struct<x:double>"                 [[1.00]]))
+      "struct<x:double>"                 [[1.00]]
+      "struct<x:decimal(12,2)>"          [[1.00M]]))
   (testing "frames"
     (are [schema in frame] (= frame (roundtrip in schema))
       "struct<x:int,y:string>"      [[nil "a"] [2 nil]]                                {:x [nil 2] :y ["a" nil]}
@@ -170,3 +171,7 @@
 (deftest to-instant-test
   (testing "strings"
     (is (= (Instant/parse "2017-04-07T17:13:19.581Z") (to-instant "2017-04-07T17:13:19.581Z" {})))))
+
+(deftest to-date-test
+  (testing "String"
+    (is (= (LocalDate/of 2017 5 6) (to-date "2017-05-06")))))

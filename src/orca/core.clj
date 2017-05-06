@@ -39,7 +39,7 @@
   (read-value [col schema idx]))
 
 (defprotocol ColumnValueWriter
-  (write-value [col idx v schema opts]))
+  (write-value! [col idx v schema opts]))
 
 (defprotocol ByteConversion
   (to-bytes [x]))
@@ -52,6 +52,9 @@
 
 (defprotocol InstantConversion
   (to-instant [ld opts]))
+
+(defprotocol DateConversion
+  (to-date [ld]))
 
 (defn decode-column [^ColumnVector col schema nrows]
   (loop [idx 0
@@ -275,10 +278,13 @@
       (BigDecimal. s)
       (catch NumberFormatException ex))))
 
+(defn parse-date [^String s]
+  (LocalDate/parse s DateTimeFormatter/ISO_DATE))
+
 (defn try-date [^String s {:keys [coerce-date-strings?] :as opts}]
   (when coerce-date-strings?
     (try
-      (LocalDate/parse s DateTimeFormatter/ISO_DATE)
+      (parse-date s)
       (catch DateTimeParseException ex))))
 
 (defn try-timestamp [^String s {:keys [coerce-timestamp-strings?] :as opts}]
@@ -421,6 +427,14 @@
   (set! (.noNulls col) false)
   (aset-boolean (.isNull col) idx true))
 
+(defn write-value [col idx v schema opts]
+  (try
+    (write-value! col idx v schema opts)
+    (catch Exception ex
+      (set-null! col idx)
+      (println ex)
+      (println "unable to write" (pr-str v) "to" schema))))
+
 (extend-protocol ByteConversion
   java.lang.String
   (to-bytes [s] (.getBytes s serialization-charset)))
@@ -442,11 +456,22 @@
   Boolean
   (to-long [b] (case b true 1 false 0)))
 
+(extend-protocol DateConversion
+  String
+  (to-date [d] (parse-date d))
+
+  LocalDate
+  (to-date [d] d))
+
 (extend-type DecimalColumnVector
   ColumnValueReader
   (read-value [arr schema idx]
     (let [^HiveDecimalWritable d (aget (.vector arr) idx)]
-      (.bigDecimalValue (.getHiveDecimal d)))))
+      (.bigDecimalValue (.getHiveDecimal d))))
+
+  ColumnValueWriter
+  (write-value! [col idx v schema opts]
+    (aset (.vector col) idx (HiveDecimalWritable. (str v)))))
 
 (extend-type LongColumnVector
   ColumnValueReader
@@ -456,8 +481,10 @@
       (aget (.vector arr) idx)))
 
   ColumnValueWriter
-  (write-value [col idx v _ opts]
-    (aset-long (.vector col) idx (to-long v))))
+  (write-value! [col idx v ^TypeDescription schema opts]
+    (condp = (.getCategory schema)
+      TypeDescription$Category/DATE (aset-long (.vector col) idx (.toEpochDay ^LocalDate (to-date v)))
+      (aset-long (.vector col) idx (to-long v)))))
 
 (extend-type DoubleColumnVector
   ColumnValueReader
@@ -465,7 +492,7 @@
     (aget (.vector arr) idx))
 
   ColumnValueWriter
-  (write-value [col idx v _ opts]
+  (write-value! [col idx v _ opts]
     (aset-double (.vector col) idx (double v))))
 
 (extend-type BytesColumnVector
@@ -475,7 +502,7 @@
       (String. ^"[B" ba (aget (.start arr) idx) (aget (.length arr) idx) serialization-charset)))
 
   ColumnValueWriter
-  (write-value [col idx v _ opts]
+  (write-value! [col idx v _ opts]
     (.setVal col idx (to-bytes v))))
 
 (extend-type TimestampColumnVector
@@ -484,7 +511,7 @@
     (.plusNanos (Instant/ofEpochMilli (aget (.time arr) idx)) (.getNanos arr idx)))
 
   ColumnValueWriter
-  (write-value [col idx v schema opts]
+  (write-value! [col idx v schema opts]
     (.set col idx (java.sql.Timestamp/from ^Instant (to-instant v opts)))))
 
 (extend-type ListColumnVector
@@ -497,7 +524,7 @@
       (mapv #(read-value child-col child-schema %) (range offset (+ offset len)))))
 
   ColumnValueWriter
-  (write-value [col idx v ^TypeDescription schema opts]
+  (write-value! [col idx v ^TypeDescription schema opts]
     (let [child-col    (.child col)
           child-count  (.childCount col)
           child-schema (first (.getChildren schema))
@@ -523,7 +550,7 @@
      (map vector (.fields col) (.getFieldNames schema) (.getChildren schema))))
 
   ColumnValueWriter
-  (write-value [col idx v ^TypeDescription schema opts]
+  (write-value! [col idx v ^TypeDescription schema opts]
     (if (nil? v)
       (set-null! col idx)
       (doseq [[^ColumnVector field-col field-name ^TypeDescription field-type] (map vector (.fields col) (.getFieldNames schema) (.getChildren schema))
