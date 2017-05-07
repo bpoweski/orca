@@ -575,35 +575,55 @@
         (set-null! col idx)
         (write-value col idx v child opts)))))
 
+(defn file-encoder
+  "Apache ORC transducer."
+  [output-path schema batch-size {:keys [overwrite?] :or {overwrite? false} :as opts}]
+  {:pre [(TypeDescription/fromString schema)]}
+  (fn [xf]
+    (let [_       (when overwrite?
+                    (.delete (io/file output-path)))
+          conf    (Configuration.)
+          schema  (TypeDescription/fromString schema)
+          options (.setSchema (OrcFile/writerOptions conf) schema)
+          writer  (OrcFile/createWriter (to-path output-path) options)
+          batch   (.createRowBatch schema)
+          _       (.ensureSize batch batch-size)]
+      (fn
+        ([] (xf))
+        ([result]
+         (try
+           (let [idx (.size batch)
+                 result (if (pos? idx)
+                          (do (.addRowBatch writer batch)
+                              (unreduced (xf result {:batch-size (inc idx)})))
+                          result)]
+
+             (xf result))
+           (finally
+             (.close writer))))
+        ([result input]
+         (let [idx (.size batch)]
+           (set! (.size batch) (inc idx))
+           (try
+             (write-row! input batch idx schema opts)
+             (if (= batch-size (inc idx))
+               (do (.addRowBatch writer batch)
+                   (.reset batch)
+                   (xf result {:batch-size (inc idx)}))
+               result)
+             (catch Exception ex
+               (.close writer)
+               (throw ex)))))))))
+
 (defn write-rows
   "Write row-seq into an ORC file at path.
 
   Options:
 
-  :overwrite?  - overwrites path if a file exists."
-  [path row-seq schema & {:keys [overwrite?] :or {overwrite? false} :as opts}]
-  (try
-    (when overwrite?
-      (.delete (io/file path)))
-    (let [conf    (Configuration.)
-          schema  (TypeDescription/fromString schema)
-          options (.setSchema (OrcFile/writerOptions conf) schema)
-          writer  (OrcFile/createWriter (to-path path) options)
-          batch   (.createRowBatch schema)]
-      (try
-        (doseq [row-batch (partition-all 1024 row-seq)
-                :let [batch-size (count row-batch)
-                      _          (.ensureSize batch batch-size)]]
-          (doseq [row row-batch
-                  :let [idx (.size batch)]]
-            (set! (.size batch) (inc idx))
-            (write-row! row batch idx schema opts))
-          (.addRowBatch writer batch)
-          (.reset batch))
-        (finally
-          (.close writer))))
-    (catch Exception ex
-      (throw ex))))
+  :overwrite?  - overwrites path if a file exists.
+  :batch-size  - size of ORC row batch"
+  [path row-seq schema & {:keys [overwrite? batch-size] :or {overwrite? false batch-size 1024} :as opts}]
+  (transduce (file-encoder path schema batch-size opts) (constantly nil) row-seq))
 
 (defn tmp-path []
   (let [tmp (java.io.File/createTempFile "test" (str (rand-int (Integer/MAX_VALUE))))
