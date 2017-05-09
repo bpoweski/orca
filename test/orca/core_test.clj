@@ -163,14 +163,18 @@
 (deftest to-long-test
   (testing "date"
     (is (= 17168 (to-long (LocalDate/of 2017 1 2)))))
+  (testing "timestamp"
+    (is (= 17168 (to-long (LocalDate/of 2017 1 2)))))
   (testing "boolean"
     (is (= 1 (to-long true)))
     (is (= 0 (to-long false)))
     (is (= 1 (to-long 1)))))
 
 (deftest to-instant-test
-  (testing "strings"
-    (is (= (Instant/parse "2017-04-07T17:13:19.581Z") (to-instant "2017-04-07T17:13:19.581Z" {})))))
+  (testing "String"
+    (is (= (Instant/parse "2017-04-07T17:13:19.581Z") (to-instant "2017-04-07T17:13:19.581Z" {}))))
+  (testing "Long"
+    (is (= (Instant/ofEpochMilli 0) (to-instant 0 {})))))
 
 (deftest to-date-test
   (testing "String"

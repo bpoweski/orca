@@ -3,7 +3,8 @@
             [clojure.pprint :refer [pprint]]
             [clojure.data :refer [diff]]
             [clojure.set :as set]
-            [clojure.string :as str])
+            [clojure.string :as str]
+            [clojure.tools.logging :refer [warn]])
   (:import [org.apache.hadoop.hive.ql.exec.vector
             VectorizedRowBatch ColumnVector DecimalColumnVector DoubleColumnVector LongColumnVector BytesColumnVector TimestampColumnVector
             ListColumnVector StructColumnVector]
@@ -432,8 +433,7 @@
     (write-value! col idx v schema opts)
     (catch Exception ex
       (set-null! col idx)
-      (println ex)
-      (println "unable to write" (pr-str v) "to" schema))))
+      (warn ex "unable to write" (pr-str v) "as" schema))))
 
 (extend-protocol ByteConversion
   java.lang.String
@@ -444,7 +444,10 @@
   (to-instant [x _] x)
 
   String
-  (to-instant [x opts] (Instant/parse x)))
+  (to-instant [x opts] (Instant/parse x))
+
+  Number
+  (to-instant [x _] (Instant/ofEpochMilli (long x))))
 
 (extend-protocol LongConversion
   Number
