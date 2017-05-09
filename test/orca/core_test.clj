@@ -151,7 +151,12 @@
       "struct<y:struct<x:int>>"          [[{:x 1}]]
       "struct<y:struct<x:int,y:string>>" [[{:x 1}]]
       "struct<x:double>"                 [[1.00]]
-      "struct<x:decimal(12,2)>"          [[1.00M]]))
+      "struct<x:decimal(12,2)>"          [[1.00M]]
+      "struct<x:map<string,string>>"     [[nil]]
+      "struct<x:map<string,string>>"     [[{"a" "b"}]]
+      "struct<x:map<string,string>>"     [[{nil "b"}]]
+      "struct<x:map<string,string>>"     [[{"a" nil}]]
+      "struct<x:map<string,string>>"     [[{nil nil}]]))
   (testing "frames"
     (are [schema in frame] (= frame (roundtrip in schema))
       "struct<x:int,y:string>"      [[nil "a"] [2 nil]]                                {:x [nil 2] :y ["a" nil]}

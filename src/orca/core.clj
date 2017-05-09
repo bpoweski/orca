@@ -7,7 +7,7 @@
             [clojure.tools.logging :refer [warn]])
   (:import [org.apache.hadoop.hive.ql.exec.vector
             VectorizedRowBatch ColumnVector DecimalColumnVector DoubleColumnVector LongColumnVector BytesColumnVector TimestampColumnVector
-            ListColumnVector StructColumnVector]
+            ListColumnVector MapColumnVector StructColumnVector]
            [org.apache.orc OrcFile Reader Writer TypeDescription TypeDescription$Category]
            [org.apache.hadoop.conf Configuration]
            [org.apache.hadoop.fs Path]
@@ -430,7 +430,9 @@
 
 (defn write-value [col idx v schema opts]
   (try
-    (write-value! col idx v schema opts)
+    (if (nil? v)
+      (set-null! col idx)
+      (write-value! col idx v schema opts))
     (catch Exception ex
       (set-null! col idx)
       (warn ex "unable to write" (pr-str v) "as" schema))))
@@ -558,9 +560,35 @@
       (set-null! col idx)
       (doseq [[^ColumnVector field-col field-name ^TypeDescription field-type] (map vector (.fields col) (.getFieldNames schema) (.getChildren schema))
               :let [field-value (get v (keyword field-name))]]
-        (if (nil? field-value)
-          (set-null! field-col idx)
-          (write-value field-col idx field-value field-type opts))))))
+        (write-value field-col idx field-value field-type opts)))))
+
+(extend-type MapColumnVector
+  ColumnValueReader
+  (read-value [col ^TypeDescription schema idx]
+    (let [[key-schema value-schema] (.getChildren schema)
+          offset                    (aget (.offsets col) idx)
+          len                       (aget (.lengths col) idx)]
+      (reduce
+       (fn [ret idx]
+         (assoc ret (read-value (.keys col) key-schema idx) (read-value (.values col) value-schema idx)))
+       nil
+       (range offset (+ offset len)))))
+
+  ColumnValueWriter
+  (write-value! [col idx v ^TypeDescription schema opts]
+    (if (nil? v)
+      (set-null! col idx)
+      (let [[key-schema value-schema] (.getChildren schema)
+            child-count               (.childCount col)
+            kv-count                  (count v)
+            _                         (aset-long (.offsets col) idx child-count)
+            _                         (.ensureSize col (+ child-count kv-count) true)]
+        (doseq [[k v] v
+                :let [child-offset (.childCount col)]]
+          (write-value (.keys col) child-offset k key-schema opts)
+          (write-value (.values col) child-offset v value-schema opts)
+          (set! (.childCount col) (inc child-offset)))
+        (aset-long (.lengths col) idx kv-count)))))
 
 (extend-protocol RowWriter
   clojure.lang.IPersistentMap
