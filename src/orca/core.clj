@@ -556,11 +556,9 @@
 
   ColumnValueWriter
   (write-value! [col idx v ^TypeDescription schema opts]
-    (if (nil? v)
-      (set-null! col idx)
-      (doseq [[^ColumnVector field-col field-name ^TypeDescription field-type] (map vector (.fields col) (.getFieldNames schema) (.getChildren schema))
-              :let [field-value (get v (keyword field-name))]]
-        (write-value field-col idx field-value field-type opts)))))
+    (doseq [[^ColumnVector field-col field-name ^TypeDescription field-type] (map vector (.fields col) (.getFieldNames schema) (.getChildren schema))
+            :let [field-value (get v (keyword field-name))]]
+      (write-value field-col idx field-value field-type opts))))
 
 (extend-type MapColumnVector
   ColumnValueReader
@@ -576,35 +574,29 @@
 
   ColumnValueWriter
   (write-value! [col idx v ^TypeDescription schema opts]
-    (if (nil? v)
-      (set-null! col idx)
-      (let [[key-schema value-schema] (.getChildren schema)
-            child-count               (.childCount col)
-            kv-count                  (count v)
-            _                         (aset-long (.offsets col) idx child-count)
-            _                         (.ensureSize col (+ child-count kv-count) true)]
-        (doseq [[k v] v
-                :let [child-offset (.childCount col)]]
-          (write-value (.keys col) child-offset k key-schema opts)
-          (write-value (.values col) child-offset v value-schema opts)
-          (set! (.childCount col) (inc child-offset)))
-        (aset-long (.lengths col) idx kv-count)))))
+    (let [[key-schema value-schema] (.getChildren schema)
+          child-count               (.childCount col)
+          kv-count                  (count v)
+          _                         (aset-long (.offsets col) idx child-count)
+          _                         (.ensureSize col (+ child-count kv-count) true)]
+      (doseq [[k v] v
+              :let [child-offset (.childCount col)]]
+        (write-value (.keys col) child-offset k key-schema opts)
+        (write-value (.values col) child-offset v value-schema opts)
+        (set! (.childCount col) (inc child-offset)))
+      (aset-long (.lengths col) idx kv-count))))
 
 (extend-protocol RowWriter
   clojure.lang.IPersistentMap
   (write-row! [row ^VectorizedRowBatch batch idx ^TypeDescription schema opts]
     (doseq [[^ColumnVector col field child] (map vector (.cols batch) (.getFieldNames schema) (.getChildren schema))]
       (let [val (get row (keyword field))]
-        (if (nil? val)
-          (set-null! col idx)
-          (write-value col idx val child opts)))))
+        (write-value col idx val child opts))))
 
   clojure.lang.Sequential
   (write-row! [row ^VectorizedRowBatch batch idx ^TypeDescription schema opts]
     (doseq [[^ColumnVector col v child] (map vector (.cols batch) row (.getChildren schema))]
-      (if (nil? v)
-        (set-null! col idx)
-        (write-value col idx v child opts)))))
+      (write-value col idx v child opts))))
 
 (defn file-encoder
   "Reduce function that creates an Apache ORC.  Each step is expected to be a row."
