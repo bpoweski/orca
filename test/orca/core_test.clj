@@ -160,6 +160,7 @@
   (testing "frames"
     (are [schema in frame] (= frame (roundtrip in schema))
       "struct<x:int,y:string>"      [[nil "a"] [2 nil]]                                {:x [nil 2] :y ["a" nil]}
+      "struct<x:string>"            [[10] [10] [true]]                                 {:x ["10" "10" "true"]}
       "struct<x:string,y:int>"      [{:x "foo" :y 10} {:x "bar" :y 100000} {:z false}] {:x ["foo" "bar" nil] :y [10 100000 nil]}))
   (testing "type coersion"
     (are [schema in out] (= out (frame->vecs (roundtrip in schema)))

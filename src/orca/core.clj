@@ -438,8 +438,11 @@
       (warn ex "unable to write" (pr-str v) "as" schema))))
 
 (extend-protocol ByteConversion
-  java.lang.String
-  (to-bytes [s] (.getBytes s serialization-charset)))
+  String
+  (to-bytes [s] (.getBytes s serialization-charset))
+
+  Object
+  (to-bytes [o] (to-bytes (str o))))
 
 (extend-protocol InstantConversion
   Instant
@@ -507,7 +510,7 @@
       (String. ^"[B" ba (aget (.start arr) idx) (aget (.length arr) idx) serialization-charset)))
 
   ColumnValueWriter
-  (write-value! [col idx v _ opts]
+  (write-value! [col idx v schema opts]
     (.setVal col idx (to-bytes v))))
 
 (extend-type TimestampColumnVector
