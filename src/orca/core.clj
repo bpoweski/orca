@@ -441,6 +441,9 @@
   String
   (to-bytes [s] (.getBytes s serialization-charset))
 
+  clojure.lang.Keyword
+  (to-bytes [kw] (to-bytes (name kw)))
+
   Object
   (to-bytes [o] (to-bytes (str o))))
 
