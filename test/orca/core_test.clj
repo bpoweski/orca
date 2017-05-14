@@ -3,7 +3,8 @@
             [clojure.java.io :as io]
             [orca.core :as orc :refer :all])
   (:import [org.apache.hadoop.fs Path]
-           [java.time Instant LocalDate]))
+           [java.time Instant LocalDate]
+           [org.apache.orc TypeDescription TypeDescription$Category]))
 
 
 (deftest path-test
@@ -104,7 +105,21 @@
   (testing "date"
     (is (= "date" (infer-typedesc (LocalDate/of 2017 1 1)))))
   (testing "timestamp"
-    (is (= "timestamp" (infer-typedesc (Instant/now))))))
+    (is (= "timestamp" (infer-typedesc (Instant/now)))))
+  (testing "map"
+    (is (= "map<string,string>" (str (typedef->schema [::orc/map ::orc/string ::orc/string]))))))
+
+(deftest schema->typedef-test
+  (testing "string"
+    (is (= ::orc/boolean (schema->typedef (TypeDescription/fromString "boolean"))))
+    (is (= ::orc/string (schema->typedef (TypeDescription/fromString "string"))))
+    (is (= ::orc/tinyint (schema->typedef (TypeDescription/fromString "tinyint"))))
+    (is (= ::orc/smallint (schema->typedef (TypeDescription/fromString "smallint"))))
+    (is (= ::orc/int (schema->typedef (TypeDescription/fromString "int"))))
+    (is (= ::orc/bigint (schema->typedef (TypeDescription/fromString "bigint"))))
+    (is (= ::orc/float (schema->typedef (TypeDescription/fromString "float"))))
+    (is (= ::orc/double (schema->typedef (TypeDescription/fromString "double"))))
+    (is (= [::orc/map ::orc/string ::orc/string] (schema->typedef (TypeDescription/fromString "map<string,string>"))))))
 
 (deftest merge-typedef-test
   (testing "structs"

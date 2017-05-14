@@ -302,6 +302,20 @@
       (some-> x (try-decimal opts) (infer-typedef opts))
       ::string))
 
+(defn schema->typedef
+  "Convert a typedef from an ORC TypeDescription"
+  [^TypeDescription schema]
+  (condp = (.getCategory schema)
+    TypeDescription$Category/STRING  ::string
+    TypeDescription$Category/MAP     (into [::map] (map schema->typedef (.getChildren schema)))
+    TypeDescription$Category/BOOLEAN ::boolean
+    TypeDescription$Category/BYTE    ::tinyint
+    TypeDescription$Category/SHORT   ::smallint
+    TypeDescription$Category/INT     ::int
+    TypeDescription$Category/LONG    ::bigint
+    TypeDescription$Category/FLOAT   ::float
+    TypeDescription$Category/DOUBLE  ::double))
+
 (defn typedef->schema
   "Creates an ORC TypeDescription"
   ([td] (typedef->schema td {}))
@@ -324,16 +338,9 @@
                        (number? scale) (.withScale scale)
                        (number? precision) (.withPrecision precision)))
        ::varchar   (TypeDescription/createVarchar)
-       ::char      (TypeDescription/createChar )
+       ::char      (TypeDescription/createChar)
        ::array     (TypeDescription/createList (typedef->schema opts))
-       ::map       (let [key-types (set (map typedef (keys opts)))
-                         ktype     (if (> (count key-types) 1)
-                                     (typedef->schema [::union key-types])
-                                     (typedef->schema (first key-types)))
-                         val-types (set (vals opts))
-                         vtype     (if (> (count val-types) 1)
-                                     (typedef->schema [::union val-types])
-                                     (typedef->schema (first val-types)))]
+       ::map       (let [[ktype vtype] (map typedef->schema (drop 1 td))]
                      (TypeDescription/createMap ktype vtype))
        ::struct    (let [struct (TypeDescription/createStruct)]
                      (doseq [[k v] opts]
@@ -398,7 +405,7 @@
   (let [[_ x-params] x]
     (if (set? x-params)
       [::array (reduce merge-typedef (map simplify-typedef x-params))]
-      x)))
+      [::array (simplify-typedef x-params)])))
 
 (defmethod combine-typedef ::struct [[_ x] [_ y]]
   [::struct (reduce-kv (fn [m field field-type]
