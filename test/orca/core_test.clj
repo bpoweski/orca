@@ -77,7 +77,12 @@
             {:a    ::orc/tinyint
              "foo" ::orc/string
              10    ::orc/tinyint}]
-           (typedef {:a 1 "foo" "bar" 10 11})))))
+           (typedef {:a 1 "foo" "bar" 10 11})))
+    (is (= [::orc/struct
+            {:_meta [::orc/struct {:x ::orc/tinyint :y [::orc/array #{::orc/string [::orc/array ::orc/string]}]}]}]
+           (typedef {:_meta {:x 10 :y ["a" "b" ["foo"]]}})))
+    (is (= [:orca.core/struct {:_meta [:orca.core/struct {:x ::orc/tinyint :y ::orc/string}]}]
+           (typedef {:_meta {:x 10 :y ["a" "b" ["foo"]]}} {:override-struct {:y ::orc/string}})))))
 
 (defn infer-typedesc [x]
   (str (typedef->schema (typedef x))))

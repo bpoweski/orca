@@ -258,9 +258,11 @@
   [::struct
    (reduce-kv
     (fn [kmap k v]
-      (if-let [dt (data-type v)]
-        (assoc kmap k (infer-typedef v opts))
-        kmap))
+      (if-let [override-typedef (get-in opts [:override-struct k])]
+        (assoc kmap k override-typedef)
+        (if-let [dt (data-type v)]
+          (assoc kmap k (infer-typedef v opts))
+          kmap)))
     {}
     x)])
 
@@ -294,7 +296,7 @@
       (Instant/parse s)
       (catch DateTimeParseException ex))))
 
-(defmethod infer-typedef ::string [x {:keys [coerce-decimal-strings? coerce-date-strings?] :as opts}]
+(defmethod infer-typedef ::string [x opts]
   (or (some-> x (try-date opts) (infer-typedef opts))
       (some-> x (try-timestamp opts) (infer-typedef opts))
       (some-> x (try-decimal opts) (infer-typedef opts))
