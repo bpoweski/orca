@@ -306,16 +306,18 @@
   "Convert a typedef from an ORC TypeDescription"
   [^TypeDescription schema]
   (condp = (.getCategory schema)
-    TypeDescription$Category/STRING  ::string
-    TypeDescription$Category/MAP     (into [::map] (map schema->typedef (.getChildren schema)))
-    TypeDescription$Category/BOOLEAN ::boolean
-    TypeDescription$Category/BYTE    ::tinyint
-    TypeDescription$Category/SHORT   ::smallint
-    TypeDescription$Category/INT     ::int
-    TypeDescription$Category/LONG    ::bigint
-    TypeDescription$Category/FLOAT   ::float
-    TypeDescription$Category/DOUBLE  ::double
-    TypeDescription$Category/STRUCT  [::struct (zipmap (map keyword (.getFieldNames schema)) (map schema->typedef(.getChildren schema)))]))
+    TypeDescription$Category/STRING     ::string
+    TypeDescription$Category/MAP        (into [::map] (map schema->typedef (.getChildren schema)))
+    TypeDescription$Category/BOOLEAN    ::boolean
+    TypeDescription$Category/BYTE       ::tinyint
+    TypeDescription$Category/SHORT      ::smallint
+    TypeDescription$Category/INT        ::int
+    TypeDescription$Category/LONG       ::bigint
+    TypeDescription$Category/FLOAT      ::float
+    TypeDescription$Category/DOUBLE     ::double
+    TypeDescription$Category/TIMESTAMP  ::timestamp
+    TypeDescription$Category/LIST       [::array (first (map schema->typedef (.getChildren schema)))]
+    TypeDescription$Category/STRUCT     [::struct (zipmap (map keyword (.getFieldNames schema)) (map schema->typedef (.getChildren schema)))]))
 
 (defn typedef->schema
   "Creates an ORC TypeDescription"

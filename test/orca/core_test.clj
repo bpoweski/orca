@@ -119,6 +119,8 @@
     (is (= ::orc/bigint (schema->typedef (TypeDescription/fromString "bigint"))))
     (is (= ::orc/float (schema->typedef (TypeDescription/fromString "float"))))
     (is (= ::orc/double (schema->typedef (TypeDescription/fromString "double"))))
+    (is (= ::orc/timestamp (schema->typedef (TypeDescription/fromString "timestamp"))))
+    (is (= [::orc/array ::orc/int] (schema->typedef (TypeDescription/fromString "array<int>"))))
     (is (= [::orc/map ::orc/string ::orc/string] (schema->typedef (TypeDescription/fromString "map<string,string>"))))
     (is (= [::orc/struct {:x ::orc/double}] (schema->typedef (TypeDescription/fromString "struct<x:double>"))))))
 
