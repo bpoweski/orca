@@ -119,8 +119,7 @@
     (is (= ::orc/bigint (schema->typedef (TypeDescription/fromString "bigint"))))
     (is (= ::orc/float (schema->typedef (TypeDescription/fromString "float"))))
     (is (= ::orc/double (schema->typedef (TypeDescription/fromString "double"))))
-    (is (= [::orc/map ::orc/string ::orc/string] (schema->typedef (TypeDescription/fromString "map<string,string>"))))
-    (is (= [::orc/struct {:x ::orc/double}] (schema->typedef (TypeDescription/fromString "struct<x:double>"))))))
+    (is (= [::orc/map ::orc/string ::orc/string] (schema->typedef (TypeDescription/fromString "map<string,string>"))))))
 
 (deftest merge-typedef-test
   (testing "structs"
@@ -187,8 +186,7 @@
     (are [schema in out] (= out (frame->vecs (roundtrip in schema)))
       "struct<x:timestamp>"          [["2017-04-07T17:13:19.581Z"]]  [[(Instant/parse "2017-04-07T17:13:19.581Z")]]
       "struct<x:map<string,string>>" [[{"x" "y"}]]                   [[{"x" "y"}]]
-      "struct<x:map<string,string>>" [[{:x "y"}]]                    [[{"x" "y"}]]
-      "struct<x:map<string,string>>" [[{:x "y" "b" "10"}]]           [[{"x" "y" "b" "10"}]])))
+      "struct<x:map<string,string>>" [[{:x "y"}]]                    [[{"x" "y"}]])))
 
 (deftest to-long-test
   (testing "date"
