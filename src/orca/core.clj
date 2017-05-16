@@ -314,7 +314,8 @@
     TypeDescription$Category/INT     ::int
     TypeDescription$Category/LONG    ::bigint
     TypeDescription$Category/FLOAT   ::float
-    TypeDescription$Category/DOUBLE  ::double))
+    TypeDescription$Category/DOUBLE  ::double
+    TypeDescription$Category/STRUCT  [::struct (zipmap (map keyword (.getFieldNames schema)) (map schema->typedef(.getChildren schema)))]))
 
 (defn typedef->schema
   "Creates an ORC TypeDescription"
@@ -444,7 +445,7 @@
       (write-value! col idx v schema opts))
     (catch Exception ex
       (set-null! col idx)
-      (warn ex "unable to write" (pr-str v) "as" schema))))
+      (warn ex "unable to write" (pr-str v) "as" schema "at index" idx))))
 
 (extend-protocol ByteConversion
   String
@@ -593,7 +594,10 @@
           child-count               (.childCount col)
           kv-count                  (count v)
           _                         (aset-long (.offsets col) idx child-count)
-          _                         (.ensureSize col (+ child-count kv-count) true)]
+          required-size             (+ child-count kv-count)
+          _                         (.ensureSize col required-size true)
+          _                         (.ensureSize (.keys col) required-size true)
+          _                         (.ensureSize (.values col) required-size true)]
       (doseq [[k v] v
               :let [child-offset (.childCount col)]]
         (write-value (.keys col) child-offset k key-schema opts)
@@ -615,13 +619,18 @@
 
 (defn file-encoder
   "Reduce function that creates an Apache ORC.  Each step is expected to be a row."
-  [output-path schema batch-size {:keys [overwrite?] :or {overwrite? false} :as opts}]
+  [output-path schema batch-size {:keys [overwrite? stripe-size row-index-stride enforce-buffer-size? table-properties orc-memory-pool]
+                                  :or {overwrite? false orc-memory-pool 0.5} :as opts}]
   {:pre [(TypeDescription/fromString schema)]}
   (let [_       (when overwrite?
                   (.delete (io/file output-path)))
-        conf    (Configuration.)
+        conf    (doto (Configuration.)
+                  (.set "hive.exec.orc.memory.pool" (str orc-memory-pool)))
         schema  (TypeDescription/fromString schema)
-        options (.setSchema (OrcFile/writerOptions conf) schema)
+        options (cond-> (.setSchema (OrcFile/writerOptions conf) schema)
+                  row-index-stride     (.rowIndexStride row-index-stride)
+                  stripe-size          (.stripeSize stripe-size)
+                  enforce-buffer-size? (.enforceBufferSize))
         writer  (OrcFile/createWriter (to-path output-path) options)
         batch   (.createRowBatch schema)
         _       (.ensureSize batch batch-size)]
