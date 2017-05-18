@@ -666,8 +666,9 @@
 
   :overwrite?  - overwrites path if a file exists.
   :batch-size  - size of ORC row batch"
-  [path row-seq schema & {:keys [overwrite? batch-size] :or {overwrite? false batch-size 1024} :as opts}]
-  (transduce (map identity) (file-encoder path schema batch-size opts) row-seq))
+  ([path row-seq schema] (write-rows path row-seq schema {}))
+  ([path row-seq schema {:keys [overwrite? batch-size] :or {overwrite? false batch-size 1024} :as opts}]
+   (transduce (map identity) (file-encoder path schema batch-size opts) row-seq)))
 
 (defn tmp-path []
   (let [tmp (java.io.File/createTempFile "test" (str (rand-int (Integer/MAX_VALUE))))
